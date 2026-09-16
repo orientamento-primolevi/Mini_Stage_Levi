@@ -169,13 +169,14 @@
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAnalytics } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-analytics.js";
-        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged, GoogleAuthProvider, signInWithPopup, signOut } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, doc, setDoc, getDoc, collection, getDocs, deleteDoc, runTransaction, onSnapshot, query, where, updateDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
         
-        window.firebaseImports = {
-            initializeApp, getAnalytics, getAuth, signInAnonymously, onAuthStateChanged,
+        import { installBackendClient } from "./ministage-backend-client.js?v=20260917-backend1";
+        window.firebaseImports = installBackendClient({
+            initializeApp, getAnalytics, getAuth, signInAnonymously, onAuthStateChanged, GoogleAuthProvider, signInWithPopup, signOut,
             getFirestore, doc, setDoc, getDoc, collection, getDocs, deleteDoc, runTransaction, onSnapshot, query, where, updateDoc
-        };
+        });
     </script>
 </head>
 <body class="relative">
@@ -407,8 +408,8 @@
             <!-- Box Login -->
             <div id="admin-login" class="glass-card w-full max-w-md mx-auto p-6 text-center space-y-4">
                 <h1 class="text-xl font-black text-red-700">Area Riservata Docenti</h1>
-                <p class="text-xs text-gray-500">Inserisci la chiave d'accesso docente</p>
-                <input id="admin-password" type="password" placeholder="Password Docente" class="w-full p-3 border border-red-100 rounded-xl text-center focus:ring-2 focus:ring-red-500 focus:border-red-500 shadow-inner">
+                <p class="text-xs text-gray-500">Accedi con l’account della commissione orientamento</p>
+                <input id="admin-password" type="hidden"><p class="text-sm text-gray-600">Accesso riservato alla commissione con l’account Google della scuola.</p>
                 <button onclick="window.adminLogin()" class="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-3 rounded-xl transition shadow-md text-sm">
                     Entra nella Dashboard
                 </button>
@@ -722,7 +723,7 @@
                     <label class="block text-[10px] font-extrabold text-purple-700 uppercase mb-1">Cerca con Nome e Cognome</label>
                     <input id="input-search-name" type="text" placeholder="Nome e Cognome Studente" class="w-full p-2.5 mb-2 border border-purple-100 rounded-lg text-xs focus:ring-1 focus:ring-purple-500">
                     <input id="input-search-email" type="email" autocomplete="email" inputmode="email" placeholder="Email utilizzata" class="w-full p-2.5 border border-purple-100 rounded-lg text-xs focus:ring-1 focus:ring-purple-500">
-                    <p class="mt-2 text-[10px] text-purple-700 leading-relaxed">Se lo studente ha più MiniStage, verranno mostrati qui sotto e potrai scegliere direttamente quello da recuperare o annullare.</p>
+                    <p class="mt-2 text-[10px] text-purple-700 leading-relaxed">Inserisci sempre l’email usata per prenotare. Se non hai il codice, nome completo ed email permettono di richiederlo nuovamente via email.</p>
                 </div>
 
                 <div id="manage-booking-matches" class="hidden space-y-2 rounded-xl border border-indigo-100 bg-indigo-50/30 p-3"></div>
@@ -791,8 +792,7 @@
     <script type="module">
         const { initializeApp, getAnalytics, getAuth, signInAnonymously, onAuthStateChanged, getFirestore, doc, setDoc, getDoc, collection, getDocs, deleteDoc, runTransaction, onSnapshot, updateDoc } = window.firebaseImports;
 
-        const ADMIN_PASSWORD = 'orientamento2025'; 
-        const COLLECTION_PRENOTAZIONI = 'prenotazioni_v2'; 
+        const COLLECTION_PRENOTAZIONI = 'prenotazioni_v2';
         const COLLECTION_IMPOSTAZIONI = 'impostazioni_stage';
         const COLLECTION_CONFIG_CAPACITA = 'config_capacita';
         const COLLECTION_CONFIG_PROMEMORIA = 'config_promemoria';
@@ -803,19 +803,21 @@
         const REMINDER_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbyqmytajeWMuQzyXzUbyIf2Zbo3MqtbVRybyHkJNu_0rwWIiR9cSr9JcjMAlCtpBvYFCA/exec';
         const CERTIFICATE_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbz3Irw6_L7GgC_abZ60LMQg1k56907re5TBaCNm6SoFo_wYeqydpMVuH5H8tkmTySFlDQ/exec';
 
-        // Configurazione Firebase - progetto sistema-prenotazione-levi
+        // Configurazione Firebase - progetto Mini-Stage-Levi
         const firebaseConfig = {
-            apiKey: "AIzaSyCVHn1KFKvjL6AfS8ndO11YVMdhogCWfSE",
-            authDomain: "sistema-prenotazione-levi.firebaseapp.com",
-            projectId: "sistema-prenotazione-levi",
-            storageBucket: "sistema-prenotazione-levi.firebasestorage.app",
-            messagingSenderId: "504725860561",
-            appId: "1:504725860561:web:5958146581516f527e95f0",
-            measurementId: "G-Z9NBF1M548"
+            apiKey: "AIzaSyAlIPez1QTyaXyAE_477m-7l1apNJGpJcU",
+            authDomain: "mini-stage-levi.firebaseapp.com",
+            projectId: "mini-stage-levi",
+            storageBucket: "mini-stage-levi.firebasestorage.app",
+            messagingSenderId: "715340135760",
+            appId: "1:715340135760:web:ecfcccb8fbe8f41bf10055"
         };
 
         const app = initializeApp(firebaseConfig);
-        const analytics = getAnalytics(app);
+        // Analytics non deve impedire l'avvio delle prenotazioni.
+        if (firebaseConfig.measurementId) {
+            try { getAnalytics(app); } catch (error) { console.warn('Analytics non disponibile:', error); }
+        }
         const db = getFirestore(app);
         const auth = getAuth(app);
 
@@ -904,6 +906,24 @@
 
         let userId = null;
         let isAuthReady = false;
+        const bookingReads = new Set();
+        const bookingReadErrors = new Map();
+        function updateBookingReadiness(name, ready) {
+            if (ready) {
+                bookingReads.add(name);
+                bookingReadErrors.delete(name);
+            } else bookingReads.delete(name);
+            const denied = Array.from(bookingReadErrors.values()).some(error => error.code === 'permission-denied');
+            window.updateStatusText(denied ? 'DATABASE NON AUTORIZZATO' : bookingReadErrors.size ? 'ERRORE CONNESSIONE' : bookingReads.size === 3 ? 'SISTEMA CONNESSO' : 'VERIFICA DISPONIBILITÀ...', bookingReadErrors.size > 0);
+        }
+        function handleBookingReadError(name, error) {
+            bookingReadErrors.set(name, error);
+            updateBookingReadiness(name, false);
+            console.error('Errore lettura ' + name, error);
+            document.getElementById('loading-spinner')?.classList.add('hidden');
+            if (isInitialLoad) { window.setView('home'); isInitialLoad = false; }
+            window.renderStages();
+        }
         let isInitialLoad = true; // Flag fondamentale per evitare bug di ritorno automatico alla Home
 
         let allBookings = []; 
@@ -915,9 +935,32 @@
         let manageActionType = 'retrieve';
         let html5QrScanner = null;
 
+        function waitForAuth(timeoutMs = 15000) {
+            if (auth.currentUser) return Promise.resolve(auth.currentUser);
+            return new Promise((resolve, reject) => {
+                let unsubscribe = () => {};
+                const timer = setTimeout(() => {
+                    unsubscribe();
+                    reject(Object.assign(new Error('Autenticazione non disponibile'), { code: 'auth/not-ready' }));
+                }, timeoutMs);
+                unsubscribe = onAuthStateChanged(auth, user => {
+                    if (!user) return;
+                    clearTimeout(timer);
+                    unsubscribe();
+                    resolve(user);
+                }, error => {
+                    clearTimeout(timer);
+                    unsubscribe();
+                    reject(error);
+                });
+            });
+        }
+
         window.__miniStageCore = {
             db,
             auth,
+            waitForAuth,
+            isBookingDataReady: () => bookingReads.size === 3,
             appId,
             addresses: INDIRIZZI_MAPPING,
             collections: {
@@ -1029,8 +1072,8 @@
                 if (user) {
                     userId = user.uid;
                     isAuthReady = true;
-                    window.updateStatusText("SISTEMA CONNESSO");
-                    await window.verifyAndSeedDB();
+                    window.updateStatusText("VERIFICA DISPONIBILITÀ...");
+                    // Il calendario viene inizializzato dal backend.
                     window.setupSnapshotListeners();
                 } else {
                     window.updateStatusText("CONNESSIONE IN CORSO...");
@@ -1074,13 +1117,14 @@
         };
 
         window.setupSnapshotListeners = function() {
-            onSnapshot(collection(db, `artifacts/${appId}/public/data/${COLLECTION_CONFIG_CAPACITA}`), (snap) => {
+            onSnapshot(collection(db, `artifacts/${appId}/public/data/${COLLECTION_CONFIG_CAPACITA}`), { includeMetadataChanges: true }, (snap) => {
                 const caps = {};
                 snap.forEach(d => { caps[d.data().indirizzo] = d.data().postiMax; });
                 capacitiesConfig = caps;
+                updateBookingReadiness('capacita', !snap.metadata.fromCache);
                 window.renderStages();
                 window.renderCapacitiesConfigInputs();
-            });
+            }, err => handleBookingReadError('capacita', err));
 
             onSnapshot(doc(db, `artifacts/${appId}/public/data/${COLLECTION_CONFIG_PROMEMORIA}/settings`), (snap) => {
                 if (snap.exists()) {
@@ -1091,7 +1135,7 @@
                 }
             });
 
-            onSnapshot(collection(db, `artifacts/${appId}/public/data/${COLLECTION_IMPOSTAZIONI}`), (snap) => {
+            onSnapshot(collection(db, `artifacts/${appId}/public/data/${COLLECTION_IMPOSTAZIONI}`), { includeMetadataChanges: true }, (snap) => {
                 const list = [];
                 snap.forEach(d => list.push({ id: d.id, ...d.data() }));
 
@@ -1107,16 +1151,17 @@
                 }
 
                 stageSlots = merged;
+                updateBookingReadiness('calendario', !snap.metadata.fromCache);
                 window.renderStages();
                 window.renderSlotManagementTable();
             }, (err) => {
-                console.error("Errore caricamento calendario MiniStage:", err);
+                handleBookingReadError('calendario', err);
                 stageSlots = buildRequiredStageSlots();
                 window.renderStages();
                 window.renderSlotManagementTable();
             });
 
-            onSnapshot(collection(db, `artifacts/${appId}/public/data/${COLLECTION_PRENOTAZIONI}`), (snap) => {
+            onSnapshot(collection(db, `artifacts/${appId}/public/data/${COLLECTION_PRENOTAZIONI}`), { includeMetadataChanges: true }, (snap) => {
                 const list = [];
                 const bMap = {};
                 snap.forEach(d => {
@@ -1129,6 +1174,7 @@
                 });
                 allBookings = list.sort((a, b) => b.timestamp - a.timestamp);
                 bookingsMap = bMap;
+                updateBookingReadiness('prenotazioni', !snap.metadata.fromCache);
                 
                 const spinner = document.getElementById('loading-spinner');
                 if (spinner) spinner.classList.add('hidden');
@@ -1143,7 +1189,7 @@
                 window.calculateReminderEligibility();
                 window.calculateCertificateEligibility();
                 window.applyFilters(); 
-            });
+            }, err => handleBookingReadError('prenotazioni', err));
         };
 
         window.renderStages = function() {
@@ -1188,7 +1234,10 @@
                     }
 
                     const isFull = remaining <= 0;
-                    const actionButton = isFull 
+                    const availabilityReady = bookingReads.size === 3;
+                    const actionButton = !availabilityReady
+                        ? '<span class="text-xs text-gray-500">Prenotazioni temporaneamente non disponibili</span>'
+                        : isFull
                         ? `<span class="bg-gray-100 text-gray-400 text-[10px] font-bold px-4 py-2 rounded-xl border border-gray-200 cursor-not-allowed text-center">Completo</span>`
                         : `<button onclick="window.openBookingModal('${slot.id}', '${slot.indirizzo.replace(/'/g, "\\'")}', '${slot.day}', '${slot.dateStr}', '${slot.time}')" class="bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-extrabold px-4 py-2.5 min-h-[44px] rounded-xl transition shadow-md font-sans">Prenota</button>`;
 
@@ -1201,13 +1250,13 @@
                                 </div>
                                 <div class="text-right">
                                     <span class="inline-block text-[9px] font-bold ${badgeColor} px-2 py-0.5 rounded-full">
-                                        ${isFull ? 'Esaurito' : `${remaining} disponibili`}
+                                        ${!availabilityReady ? 'Disponibilità da verificare' : isFull ? 'Esaurito' : `${remaining} disponibili`}
                                     </span>
-                                    <p class="text-[9px] text-gray-400 font-semibold mt-0.5">${booked} / ${maxPosti} iscritti</p>
+                                    <p class="text-[9px] text-gray-400 font-semibold mt-0.5">${availabilityReady ? `${booked} / ${maxPosti} iscritti` : 'Dati non sincronizzati'}</p>
                                 </div>
                             </div>
                             <div class="w-full bg-gray-100 h-1.5 rounded-full overflow-hidden">
-                                <div class="${progressColor} h-full transition-all duration-500" style="width: ${percentUsed}%"></div>
+                                <div class="${progressColor} h-full transition-all duration-500" style="width: ${availabilityReady ? percentUsed : 0}%"></div>
                             </div>
                             <div class="flex justify-between items-center pt-1">
                                 <span class="text-[9px] text-indigo-400 font-extrabold tracking-wider uppercase">Prenotazione richiesta</span>
@@ -1245,57 +1294,10 @@
             document.getElementById('modal-cellulare').value = '';
         };
 
+        // L'estensione gestisce validazione, capienza e salvataggio prima della ricevuta.
+        // Non generare ricevute se lo script delle prenotazioni non è ancora pronto.
         window.confirmBooking = async function() {
-            const slotId = document.getElementById('modal-slot-id').value;
-            const indirizzo = document.getElementById('modal-indirizzo').value;
-            const stageDay = document.getElementById('modal-stage-day').value;
-            const stageDate = document.getElementById('modal-stage-date').value;
-            const stageTime = document.getElementById('modal-stage-time').value;
-
-            const nome = document.getElementById('modal-nome').value.trim();
-            const escuela = document.getElementById('modal-scuola').value.trim();
-            const email = document.getElementById('modal-email').value.trim();
-            const cellulare = document.getElementById('modal-cellulare').value.trim();
-
-            if (!nome || !escuela || !email || !cellulare) {
-                return window.showMessage("Tutti i campi sono obbligatori.", true);
-            }
-            
-            window.closeModal();
-            const code = "MS-" + Math.floor(100000 + Math.random() * 900000);
-            
-            const reservationData = {
-                code: code,
-                type: 'prenotazione',
-                slotId: slotId,
-                indirizzo: indirizzo,
-                stageDay: stageDay,
-                stageDate: stageDate,
-                stageTime: stageTime,
-                nome: nome,
-                scuola: escuela,
-                email: email,
-                cellulare: cellulare,
-                timestamp: Date.now(),
-                reminderSent: false,
-                certificateSent: false
-            };
-
-            // Caricamento ISTANTANEO della pagina di ricevuta senza lag o freeze
-            window.setView('receipt', { code: code, type: 'prenotazione', data: reservationData });
-            window.showMessage("Prenotazione registrata con successo!");
-
-            // Eseguiamo il salvataggio in database e l'invio della mail in background
-            setTimeout(async () => {
-                try {
-                    const docRef = doc(db, `artifacts/${appId}/public/data/${COLLECTION_PRENOTAZIONI}`, code);
-                    await setDoc(docRef, reservationData);
-                    window.sendAutomaticEmailNotification(reservationData, false);
-                } catch(e) {
-                    console.error("Errore salvataggio database cloud:", e);
-                    window.showMessage("Errore di sincronizzazione cloud, ma la ricevuta è generata.", true);
-                }
-            }, 150);
+            window.showMessage("Il modulo prenotazioni si sta caricando. Riprova tra poco o ricarica la pagina.", true);
         };
 
         window.createBarcodeDataURL = function(text) {
@@ -2016,17 +2018,18 @@
             });
         };
 
-        window.adminLogin = function() {
-            const pass = document.getElementById('admin-password').value;
-            if (pass === ADMIN_PASSWORD) {
+        window.adminLogin = async function() {
+            try {
+                const provider = new window.firebaseImports.GoogleAuthProvider();
+                provider.setCustomParameters({ login_hint: 'orientamento@leviseregno.edu.it' });
+                await window.firebaseImports.signInWithPopup(auth, provider);
+                await window.miniStageBackend.request('admin-check');
+                await window.miniStageBackend.refresh();
                 document.getElementById('admin-login').classList.add('hidden');
                 document.getElementById('admin-dashboard').classList.remove('hidden');
-                window.calculateReminderEligibility();
-                window.calculateCertificateEligibility();
+                window.miniTeacherHome?.();
                 window.applyFilters();
-            } else {
-                window.showMessage("Password non corretta.", true);
-            }
+            } catch (error) { window.showMessage(error.message || 'Accesso commissione non riuscito.', true); }
         };
 
         window.renderCapacitiesConfigInputs = function() {
@@ -2279,39 +2282,27 @@
         };
 
         window.searchAndHandleBooking = async function() {
-            const inputCode = document.getElementById('input-search-code').value.trim().toUpperCase();
-            const inputName = document.getElementById('input-search-name').value.trim().toLowerCase().replace(/\s+/g, ' ');
-            const inputEmail = document.getElementById('input-search-email').value.trim().toLowerCase();
-
-            window.clearManageBookingMatches();
-
-            if (inputCode) {
-                const booking = allBookings.find(b => b.code === inputCode && window.isManageableBooking(b));
-                if (!booking) return window.showMessage("Nessuna prenotazione attiva o in lista d'attesa trovata con questo codice.", true);
-                return window.executeManageBookingAction(booking);
-            }
-
-            if (!inputName || !inputEmail) {
-                return window.showMessage("Inserisci il codice MS oppure Nome e Cognome insieme all'e-mail utilizzata per la prenotazione.", true);
-            }
-
-            const matches = allBookings.filter(b => {
-                if (!window.isManageableBooking(b)) return false;
-                const bookingName = String(b.nome || '').trim().toLowerCase().replace(/\s+/g, ' ');
-                const bookingEmail = String(b.email || '').trim().toLowerCase();
-                return bookingName.includes(inputName) && bookingEmail === inputEmail;
-            });
-
-            if (matches.length === 0) {
-                return window.showMessage("Nessuna prenotazione attiva o in lista d'attesa trovata corrispondente ai dati inseriti.", true);
-            }
-
-            if (matches.length === 1) {
-                return window.executeManageBookingAction(matches[0]);
-            }
-
-            window.renderManageBookingMatches(matches);
-            window.showMessage(`Trovate ${matches.length} prenotazioni. Seleziona quella interessata qui sotto.`);
+            const code=document.getElementById('input-search-code').value.trim().toUpperCase();
+            const email=document.getElementById('input-search-email').value.trim();
+            const nome=document.getElementById('input-search-name').value.trim();
+            if (!email || (!code && !nome)) return window.showMessage('Inserisci codice ed email oppure nome completo ed email per ricevere il codice.',true);
+            const button=document.getElementById('btn-submit-action');
+            if(button.disabled)return;
+            button.disabled=true;
+            try {
+                if(!code){
+                    const result=await window.miniStageBackend.request('recover',{email,nome});
+                    window.showMessage(result.message); return;
+                }
+                let booking=await window.miniStageBackend.lookup(code,email);
+                if(manageActionType==='cancel'){
+                    if(!confirm('Confermi l’annullamento della prenotazione '+code+'?'))return;
+                    booking=await window.miniStageBackend.cancel(code,email);
+                }
+                window.closeManageBookingBookingModal();
+                window.setView('receipt',{code:booking.code,type:booking.type,data:booking});
+            } catch(error){window.showMessage(error.message,true);}
+            finally{button.disabled=false;}
         };
 
         // Inizializzazione dell'applicazione
@@ -2335,7 +2326,7 @@
         }
 
     </script>
-    <script src="ministage-complete.js?v=20260916-calendar-logo1"></script>
-    <script src="ministage-admin-console-v2.js?v=20260916-calendar-logo1"></script>
+    <script src="ministage-complete.js?v=20260917-backend1"></script>
+    <script src="ministage-admin-console-v2.js?v=20260917-backend1"></script>
 </body>
 </html>

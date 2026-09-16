@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '2026.09-curvatura-label-v10';
+  const VERSION = '2026.09-backend-v1';
   const WAITLIST = 'lista_attesa';
   const ACTIVE = 'prenotazione';
   const CHECKED = 'entrato';
@@ -265,8 +265,9 @@
         return true;
       });
     } catch (e) {
+      // Un errore di permessi/rete non significa che un altro utente occupi il lock.
       console.warn('MiniStage: lock non acquisito', e);
-      return false;
+      throw e;
     }
   }
 
@@ -328,12 +329,15 @@
   }
 
   async function saveSubmission(d) {
+    if (window.miniStageBackend) return window.miniStageBackend.book(d);
+    await core.waitForAuth();
     const locked = await acquireLock(d.slotId);
     if (!locked) throw new Error('SLOT_BUSY');
     try {
       const fresh = await snapshotCollection(bookingPath());
       if (duplicateExists(d, fresh)) throw new Error('DUPLICATE');
-      const slot = slots.find(s => s.id === d.slotId) || (await snapshotCollection(slotPath())).find(s => s.id === d.slotId);
+      const slotSnapshot = await f.getDoc(f.doc(core.db, `${slotPath()}/${d.slotId}`));
+      const slot = slotSnapshot.exists() ? { ...slotSnapshot.data(), id: slotSnapshot.id } : null;
       if (!slot) throw new Error('SLOT_NOT_FOUND');
       if (slot.active === false) throw new Error('SLOT_INACTIVE');
       const canonicalIndirizzo = String(slot.indirizzo || d.indirizzo || '').trim();
@@ -415,6 +419,8 @@
       else if (e.message === 'SLOT_BUSY') window.showMessage?.('Lo slot è in aggiornamento. Riprova tra pochi secondi.', true);
       else if (e.message === 'SLOT_NOT_FOUND') window.showMessage?.('Lo slot non è più disponibile.', true);
       else if (e.message === 'SLOT_INACTIVE') window.showMessage?.('Questo MiniStage è stato disattivato e non accetta più prenotazioni.', true);
+      else if (e.code === 'permission-denied') window.showMessage?.('Il servizio prenotazioni non è autorizzato ad accedere al database. Contatta la scuola.', true);
+      else if (e.code === 'auth/not-ready' || e.code === 'auth/network-request-failed' || e.code === 'unavailable') window.showMessage?.('Connessione al servizio prenotazioni non disponibile. Riprova tra poco: i dati del modulo sono conservati.', true);
       else window.showMessage?.('Impossibile completare il salvataggio. Riprova.', true);
     } finally {
       if (button) {
@@ -459,6 +465,7 @@
   }
 
   function decorateStages() {
+    if (!core.isBookingDataReady()) return;
     slots.forEach(slot => {
       const card = findSlotCard(slot);
       if (!card) return;
@@ -627,6 +634,11 @@
   }
 
   async function sendAutomatic(res, isRetrieval = false) {
+    if (window.miniStageBackend) {
+      const el = document.getElementById('email-status-text');
+      if (el) el.textContent = 'Invio della ricevuta gestito dal server. Conserva il codice di prenotazione.';
+      return;
+    }
     if (res?.type === CANCELLED) {
       window.showMessage?.('Prenotazione annullata: nessun pass valido viene rigenerato o inviato.', true);
       return;
@@ -935,6 +947,7 @@
   window.getMiniStageClosureDueAt = closureDueAt;
 
   function scheduleReconcile(delay=180) {
+    if (window.miniStageBackend) return;
     clearTimeout(reconcileTimer);
     reconcileTimer = setTimeout(reconcileAll, delay);
   }
@@ -1114,6 +1127,7 @@
   }
 
   async function scannerSessionValid(raw) {
+    if (window.miniStageBackend) return (await window.miniStageBackend.request('scanner-validate',{token:raw})).valid;
     const digest=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(raw));
     const hash=Array.from(new Uint8Array(digest)).map(b=>b.toString(16).padStart(2,'0')).join('');
     const snap=await f.getDoc(f.doc(core.db,`${scannerPath()}/${hash}`));
@@ -1121,6 +1135,13 @@
   }
 
   async function processMobileCode(code, feedback) {
+    if (window.miniStageBackend) {
+      try {
+        const result = await window.miniStageBackend.request('scanner-checkin',{token:new URLSearchParams(location.search).get('scanner'),code});
+        feedback(result.message);
+      } catch(error) { feedback(error.message,true); }
+      return;
+    }
     const fresh=await snapshotCollection(bookingPath()); const b=fresh.find(x=>x.code===code);
     if(!b)return feedback('Codice non trovato.',true);
     if(b.type===WAITLIST)return feedback('Studente ancora in lista d’attesa.',true);
@@ -1140,7 +1161,7 @@
     try {
       mobileScanner=new Html5Qrcode('mobile-reader');
       const cams=await Html5Qrcode.getCameras();
-      if(cams.length) await mobileScanner.start({facingMode:'environment'},{fps:10,qrbox:{width:240,height:240}},txt=>{if(/^MS-\d{6}$/.test(txt))processMobileCode(txt,feedback);},()=>{});
+      if(cams.length) await mobileScanner.start({facingMode:'environment'},{fps:10,qrbox:{width:240,height:240}},txt=>{if(/^MS-(?:[A-F0-9]{24}|\d{6})$/.test(txt))processMobileCode(txt,feedback);},()=>{});
     } catch(e){feedback('Fotocamera non disponibile. Usa l’inserimento manuale.',true);}
   }
 
@@ -1218,8 +1239,8 @@
 
     // Sincronizzazione cloud separata: eventuali ritardi/errori non bloccano i click.
     try {
-      await ensureCapacity25Seed();
-      await ensureClassSeed();
+      await core.waitForAuth();
+      // Configurazione e classi inizializzate esclusivamente dal backend.
       await refreshState();
       if(scannerToken){
         await initMobileScanner(scannerToken);
@@ -1231,8 +1252,7 @@
       decorateStages();
       subscribe();
       window.__MINISTAGE_COMPLETE__.dataReady=true;
-      scheduleReconcile(400);
-      scheduleAutoClosure();
+      // Scorrimenti e operazioni automatiche sono responsabilità del backend.
     } catch(e) {
       console.warn('MiniStage: sincronizzazione iniziale non completata; interfaccia disponibile in modalità resiliente.',e);
       if(scannerToken){

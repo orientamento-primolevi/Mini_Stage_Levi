@@ -80,7 +80,7 @@
 
   // Conserva e carica integralmente il pannello docente attuale.
   const adminScript = document.createElement('script');
-  adminScript.src = 'ministage-admin-console-v2-original.js?v=20260907-label2';
+  adminScript.src = 'ministage-admin-console-v2-original.js?v=20260917-backend1';
   adminScript.async = false;
   adminScript.addEventListener('load', () => {
     fixVisibleLabel();
