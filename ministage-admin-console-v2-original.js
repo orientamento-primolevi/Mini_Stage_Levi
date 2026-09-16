@@ -155,18 +155,8 @@
   }
 
   function requirePassword(label) {
-    const expected = expectedPassword();
-    if (!expected) {
-      showMessage('Per questa operazione devi accedere nuovamente all’area docente.', true);
-      return false;
-    }
-    const entered = prompt(`Operazione protetta: ${label}.\nReinserisci la password docente:`);
-    if (entered === null) return false;
-    if (entered !== expected) {
-      showMessage('Password docente non corretta. Operazione annullata.', true);
-      return false;
-    }
-    return true;
+    if (!window.miniStageBackend?.isAdmin()) { showMessage('Accedi con l’account Google della commissione.',true); return false; }
+    return confirm('Confermi: '+label+'?');
   }
 
   function hideLegacyAdmin() {
@@ -744,11 +734,15 @@
     const duplicate = state.bookings.some(b => b.slotId === slotId && b.type !== CANCELLED && String(b.nome || '').trim().toLowerCase() === nome.toLowerCase() && String(b.email || '').trim().toLowerCase() === email.toLowerCase());
     if (duplicate) return showMessage('Esiste già una richiesta non annullata con lo stesso nome ed e-mail per questa data.', true);
     if (requestedType === ACTIVE && (liveForSlot(slotId).length >= capacityFor(slot) || waitForSlot(slotId).length > 0)) return showMessage('Lo slot è completo oppure ha già una lista d’attesa. Seleziona “Iscrizione con riserva”.', true);
-    const code = await uniqueCode();
+    let code = await uniqueCode();
     const timestamp = Date.now();
     const data = { code, type: requestedType === WAITLIST ? WAITLIST : ACTIVE, slotId, indirizzo: slot.indirizzo, stageDay: slot.day, stageDate: slot.dateStr, stageTime: slot.time, nome, scuola, email, cellulare, timestamp, reminderSent: false, certificateSent: false, classeAssegnata: classFor(slot.indirizzo), exitMode, parentGuardianName, parentGuardianRole, pickupAdultName: exitMode === 'ritiro_adulto' ? pickupAdultName : '', declarationAccepted: true, declarationTimestamp: timestamp, declarationVersion: 'MiniStage-2026-manuale-docente-v2', exitAuthorizationAccepted: true, exitAuthorizationMode: exitMode, exitAuthorizationAcceptedAt: timestamp, exitAuthorizationVersion: 'MiniStage-uscita-autorizzazione-manuale-v2', authorizationPaperRequired: exitMode === 'autonoma', authorizationPaperReceived: false, createdByTeacher: true, teacherManualEntryAt: timestamp };
     if (data.type === WAITLIST) { data.waitlistRequestedAt = timestamp; data.waitlistStatus = 'Iscrizione con riserva'; data.iscrizioneConRiserva = true; }
-    await f.setDoc(f.doc(core.db, `${bookingsPath()}/${code}`), data);
+    if (window.miniStageBackend) {
+      const saved = await window.miniStageBackend.book(data);
+      Object.assign(data, saved);
+      code = saved.code;
+    } else await f.setDoc(f.doc(core.db, `${bookingsPath()}/${code}`), data);
     showMessage(`${data.type === WAITLIST ? 'Iscrizione con riserva' : 'Prenotazione'} generata: ${code}`);
     setTimeout(() => window.sendAutomaticEmailNotification?.(data, false), 100);
   }
@@ -870,7 +864,7 @@
   }
 
   function renderPublicStages() {
-    if (!publicDataReady) return;
+    if (!publicDataReady || !core.isBookingDataReady()) return;
     const mapping = {
       'Liceo Scientifico - Scienze Applicate': 'container-liceo',
       [CURVATURA]: 'container-curvatura-economica',
@@ -975,9 +969,9 @@
   function wrapAdminLogin() {
     const base = window.adminLogin;
     if (typeof base !== 'function' || base.__miniPagesWrapped) return;
-    const wrapped = function(...args) {
+    const wrapped = async function(...args) {
       const candidate = String(document.getElementById('admin-password')?.value || '');
-      const result = base.apply(this, args);
+      const result = await base.apply(this, args);
       setTimeout(() => {
         const view = document.getElementById('view-admin');
         if (view && !view.classList.contains('hidden')) {
