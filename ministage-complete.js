@@ -74,7 +74,7 @@
     'Logistica - Quadriennale': '1I Logistica',
     'Costruzione Ambiente e Territorio (CAT)': '1D CAT',
     'Sistema Moda': '1A Sistema Moda',
-    [CURVATURA]: ''
+    [CURVATURA]: '1M Liceo Scienze Applicate - Curvatura Economica'
   };
 
   let core = null;
@@ -153,7 +153,13 @@
     caps = {};
     c.forEach(x => { if (x.indirizzo) caps[x.indirizzo] = Number(x.postiMax || DEFAULT_CAPACITY); });
     classes = { ...defaultClasses };
-    cl.forEach(x => { if (x.indirizzo) classes[x.indirizzo] = String(x.classe || ''); });
+    cl.forEach(x => {
+      if (!x.indirizzo) return;
+      const savedClass = String(x.classe || '').trim();
+      // Un vecchio valore vuoto non deve nascondere la classe 1M predefinita.
+      if (x.indirizzo === CURVATURA && (!savedClass || /^(?:classe\s+)?da definire$/i.test(savedClass))) return;
+      classes[x.indirizzo] = savedClass;
+    });
   }
 
   async function ensureCapacity25Seed() {
@@ -180,9 +186,11 @@
   async function ensureClassSeed() {
     try {
       const current = await snapshotCollection(classPath());
-      const known = new Set(current.map(x => x.indirizzo));
+      const known = new Map(current.map(x => [x.indirizzo, x]));
       for (const [indirizzo, classe] of Object.entries(defaultClasses)) {
-        if (!known.has(indirizzo)) {
+        const oldClass = String(known.get(indirizzo)?.classe || '').trim();
+        // Ripara soltanto la configurazione vuota/placeholder del percorso 1M.
+        if (!known.has(indirizzo) || (indirizzo === CURVATURA && (!oldClass || /^(?:classe\s+)?da definire$/i.test(oldClass)))) {
           await f.setDoc(f.doc(core.db, `${classPath()}/${indirizzo}`), {
             indirizzo, classe, updatedAt: Date.now()
           });
@@ -1187,7 +1195,7 @@
       caps={}; snap.forEach(d=>{const x=d.data();if(x.indirizzo)caps[x.indirizzo]=Number(x.postiMax||DEFAULT_CAPACITY)}); decorateStages(); scheduleReconcile(160);
     },err=>console.warn('MiniStage capacità listener',err));
     f.onSnapshot(f.collection(core.db, classPath()), snap=>{
-      classes={...defaultClasses}; snap.forEach(d=>{const x=d.data();if(x.indirizzo)classes[x.indirizzo]=String(x.classe||'')}); renderAdminExtension();
+      classes={...defaultClasses}; snap.forEach(d=>{const x=d.data();if(!x.indirizzo)return;const savedClass=String(x.classe||'').trim();if(x.indirizzo===CURVATURA&&(!savedClass||/^(?:classe\s+)?da definire$/i.test(savedClass)))return;classes[x.indirizzo]=savedClass}); renderAdminExtension();
     },err=>console.warn('MiniStage classi listener',err));
   }
 
