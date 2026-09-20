@@ -20,7 +20,7 @@
     'Logistica - Quadriennale': '1I Logistica',
     'Costruzione Ambiente e Territorio (CAT)': '1D CAT',
     'Sistema Moda': '1A Sistema Moda',
-    [CURVATURA]: ''
+    [CURVATURA]: '1M Liceo Scienze Applicate - Curvatura Economica'
   };
 
   let core = null;
@@ -436,9 +436,9 @@
   function renderClasses() {
     const root = document.getElementById('mini-pages-classes');
     if (!root) return;
-    root.innerHTML = (core.addresses || []).map(a => `<label class="block rounded-xl border border-indigo-100 bg-white p-3"><span class="block text-[9px] font-black uppercase text-indigo-600 mb-1">${esc(displayAddress(a))}</span><input data-mini-class="${esc(displayAddress(a))}" value="${esc(state.classes[a] || '')}" placeholder="Classe assegnata" class="w-full p-2.5 rounded-lg border border-indigo-100 text-xs font-bold"></label>`).join('');
+    root.innerHTML = (core.addresses || []).map(a => `<label class="block rounded-xl border border-indigo-100 bg-white p-3"><span class="block text-[9px] font-black uppercase text-indigo-600 mb-1">${esc(displayAddress(a))}</span><input data-mini-class="${esc(a)}" value="${esc(state.classes[a] || '')}" placeholder="Classe assegnata" class="w-full p-2.5 rounded-lg border border-indigo-100 text-xs font-bold"></label>`).join('');
     const pdf = document.getElementById('mini-pages-class-pdfs');
-    if (pdf) pdf.innerHTML = Object.entries(state.classes).filter(([,c]) => c).map(([a,c]) => `<button type="button" onclick="window.downloadClassListPdf?.('${esc(displayAddress(a)).replace(/'/g, "\\'")}')" class="bg-white border border-indigo-200 text-indigo-700 px-3 py-2.5 rounded-xl text-[10px] font-black">${esc(c)}</button>`).join('');
+    if (pdf) pdf.innerHTML = (core.addresses || []).filter(a => state.classes[a]).map(a => { const c = state.classes[a]; return `<button type="button" onclick="window.downloadClassListPdf?.('${esc(a).replace(/'/g, "\\'")}')" class="bg-white border border-indigo-200 text-indigo-700 px-3 py-2.5 rounded-xl text-[10px] font-black">${esc(c)}</button>`; }).join('');
   }
 
   function renderOverview() {
@@ -941,7 +941,7 @@
       renderAll(); renderPublicStages();
     }, e => console.warn('MiniStage docente: listener capienze', e));
     f.onSnapshot(f.collection(core.db, classesPath()), snap => {
-      state.classes = { ...defaultClasses }; snap.forEach(d => { const x = d.data(); if (x.indirizzo) state.classes[x.indirizzo] = String(x.classe || ''); }); renderAll();
+      state.classes = { ...defaultClasses }; snap.forEach(d => { const x = d.data(); if (!x.indirizzo) return; const savedClass = String(x.classe || '').trim(); if (x.indirizzo === CURVATURA && (!savedClass || /^(?:classe\s+)?da definire$/i.test(savedClass))) return; state.classes[x.indirizzo] = savedClass; }); renderAll();
     }, e => console.warn('MiniStage docente: listener classi', e));
     f.onSnapshot(f.collection(core.db, scannerPath()), snap => {
       state.sessions = []; snap.forEach(d => state.sessions.push({ id: d.id, ...d.data() })); renderScanner();
