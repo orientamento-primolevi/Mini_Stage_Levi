@@ -10,7 +10,7 @@
   const CLASS_COLLECTION = 'config_classi_ministage';
   const LOCK_COLLECTION = 'ministage_slot_locks';
   const SCANNER_COLLECTION = 'scanner_sessions';
-  const EMAIL_URL = 'https://script.google.com/macros/s/AKfycby3UI3dEPG9OEzOIHmEK7QLIIUMC6b4yopSFm-twGBV6ZLWtVAZTvmfsa7UxKHFOXfqbQ/exec';
+  const EMAIL_URL = 'https://script.google.com/macros/s/AKfycbxQmU-2BpLwVFknX3iyfLn03o7zNj1fg2rJO8j8eDMGktoIR8l0uzM59MmcAWXK7ldNBA/exec';
   const DEFAULT_CAPACITY = 25;
   const CURVATURA = 'Liceo Scientifico - Opzione Scienze Applicate - Curvatura Economica';
   const CURVATURA_PUBLIC_LABEL = 'Liceo Scienze Applicate - Curvatura Economica';
@@ -624,6 +624,8 @@
     } else if (isRetrieval) {
       subject = `MiniStage IIS Primo Levi - Duplicato prenotazione ${res.code}`;
     }
+    // Apps Script cross-origin: la richiesta no-cors evita un preflight CORS non supportato.
+    // La risposta opaca non conferma la consegna: non mostrare un falso 'e-mail inviata'.
     await fetch(EMAIL_URL, {
       method:'POST', mode:'no-cors', headers:{'Content-Type':'text/plain;charset=utf-8'},
       body:JSON.stringify({
@@ -661,6 +663,7 @@
         const pdf = await createConfirmedPdf(res, isRetrieval);
         await sendPdfEmail(res, pdf, 'confirmed', null, isRetrieval);
       }
+      window.showMessage?.('Richiesta di invio e-mail inoltrata. La consegna non può essere verificata dal sito: controlla la casella di posta e lo spam.');
     } catch (e) {
       console.error('MiniStage: invio e-mail/PDF non riuscito', e);
       window.showMessage?.('La registrazione è salvata, ma l’invio della e-mail non è riuscito.', true);
