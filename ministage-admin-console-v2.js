@@ -49,21 +49,8 @@
     });
   }
 
-  // Ripristina il comportamento storico degli Apps Script: fetch standard,
-  // senza mode:'no-cors', mantenendo gli endpoint configurati nel progetto.
-  if (!window.__miniStageAppsScriptFetchRestored) {
-    const nativeFetch = window.fetch.bind(window);
-    window.fetch = (input, init) => {
-      const url = typeof input === 'string' ? input : (input && input.url) || '';
-      if (url.startsWith('https://script.google.com/macros/s/') && init && init.mode === 'no-cors') {
-        const restoredInit = { ...init };
-        delete restoredInit.mode;
-        return nativeFetch(input, restoredInit);
-      }
-      return nativeFetch(input, init);
-    };
-    window.__miniStageAppsScriptFetchRestored = true;
-  }
+  // Non alterare globalmente window.fetch: gli invii Apps Script impostano
+  // singolarmente la modalità compatibile con il servizio e-mail.
 
   function loadPdfDateExtension() {
     if (document.querySelector('script[data-mini-pdf-date-extension]')) return;
