@@ -15,6 +15,7 @@
 
   const defaultClasses = {
     'Liceo Scientifico - Scienze Applicate': '1L Liceo Scienze Applicate',
+    'Liceo Scientifico - Scienze Applicate- Curvatura Economia': '1M Liceo Scienze Applicate - Curvatura Economica',
     'Relazioni Internazionali per il Marketing (RIM)': '1N RIM',
     'Logistica - Quadriennale': '1I Logistica',
     'Costruzione Ambiente e Territorio (CAT)': '1D CAT',
