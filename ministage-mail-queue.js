@@ -210,7 +210,9 @@
       if (!snap.exists()) return 'missing';
       const b = snap.data();
       if (!eligible({ ...b, code: b.code || code })) return 'invalid';
-      if (kind === 'pergamena' && !['entrato', 'uscito'].includes(b.type)) return 'not_present';
+      if (kind === 'ingresso' && !['entrato', 'uscito'].includes(b.type)) return 'not_present';
+      if (kind === 'uscita' && b.type !== 'uscito') return 'not_concluded';
+      if (kind === 'promemoria' && (b.type !== 'prenotazione' || !stageIso(b) || stageIso(b) < todayRome())) return 'invalid_date';
       const prev = b.mailQueue?.[kind] || {};
       if (prev.status === 'queued' || (prev.status === 'sending' && Number(prev.leaseUntil || 0) > Date.now())) return 'already';
       const queuedAt = Date.now();
@@ -225,15 +227,16 @@
 
   async function enqueueAll() {
     if (!admin() || batchBusy) return;
-    const entries = all().filter(eligible);
-    if (!entries.length) return notify('Nessun iscritto attivo con indirizzo e-mail.', true);
-    if (!confirm('Accodare il promemoria per tutti i ' + entries.length +
-      ' iscritti? Verrà reinviato anche a chi lo ha già ricevuto. Le richieste già in coda non saranno duplicate.')) return;
+    const date = resolveDate();
+    if (!date) return notify('Nessuna data Mini Stage futura disponibile.', true);
+    const entries = all().filter(b => eligible(b) && b.type === 'prenotazione' && stageIso(b) === date);
+    if (!entries.length) return notify('Nessun iscritto confermato per ' + dateText(date) + '.', true);
+    if (!confirm('Accodare i promemoria esclusivamente per i ' + entries.length +
+      ' studenti del Mini Stage del ' + dateText(date) + '?\nVerranno reinviati anche i promemoria già inoltrati.')) return;
     batchBusy = true;
     let queued = 0, skipped = 0, failed = 0;
     renderPanels();
     try {
-      // Una prenotazione per transazione: niente nuove collezioni o regole Firestore.
       for (const b of entries) {
         try {
           const r = await enqueueOne(b.code || b.id, 'promemoria');
@@ -241,11 +244,12 @@
           else skipped++;
         } catch (e) {
           failed++;
-          console.warn('MiniStage coda: impossibile accodare ' + b.code, e);
+          console.warn('MiniStage: errore accodamento promemoria', b.code, e);
         }
       }
-      notify('Promemoria accodati: ' + queued + '. Già in coda/non idonei: ' + skipped +
-        (failed ? '. Errori: ' + failed : '') + '. Mantieni aperta l’Area Docenti.', !!failed);
+      notify('Data ' + dateText(date) + ': ' + queued + ' promemoria accodati; ' +
+        skipped + ' già in coda o non idonei; ' + failed + ' errori.' +
+        ' Il motore invia mentre l’Area Docenti è aperta.', failed > 0);
     } finally {
       batchBusy = false;
       renderPanels();
@@ -260,7 +264,9 @@
       const msg = {
         queued: LABELS[kind] + ' per ' + code + ' aggiunto alla coda.',
         already: 'Questo messaggio è già in coda o in lavorazione.',
-        not_present: 'Pergamena disponibile solo per studenti presenti o usciti.',
+        not_present: 'Attestato ingresso disponibile dopo registrazione della presenza.',
+        not_concluded: 'Attestato uscita disponibile soltanto dopo la conclusione.',
+        invalid_date: 'Promemoria disponibile soltanto per iscritti con date future.',
         invalid: 'Studente non idoneo o prenotazione annullata.',
         missing: 'Prenotazione non trovata.'
       };
@@ -282,7 +288,9 @@
       const job = b.mailQueue?.[kind];
       if (!job || job.status !== 'queued' || job.id !== id) return null;
       if (!eligible({ ...b, code: b.code || code }) ||
-        (kind === 'pergamena' && !['entrato', 'uscito'].includes(b.type))) {
+        (kind === 'ingresso' && !['entrato', 'uscito'].includes(b.type)) ||
+        (kind === 'uscita' && b.type !== 'uscito') ||
+        (kind === 'promemoria' && (b.type !== 'prenotazione' || !stageIso(b) || stageIso(b) < todayRome()))) {
         tx.update(docRef, { ['mailQueue.' + kind]: { ...job, status: 'skipped', error: 'Prenotazione non idonea' } });
         return null;
       }
@@ -311,20 +319,29 @@
     const rest = parts.join(' ');
     const payload = {
       email: b.email, nome: first, cognome: rest, codice_prenotazione: b.code,
-      data: b.stageDate, orario: b.stageTime, attivita: b.indirizzo
+      data: b.stageDate, orario: b.stageTime, attivita: b.indirizzo,
+      classe_assegnata: b.classeAssegnata || ''
     };
     if (kind === 'promemoria') {
       await postOpaque(core.endpoints?.reminder, payload);
-    } else if (kind === 'pergamena') {
+    } else if (kind === 'uscita') {
       await postOpaque(core.endpoints?.certificate, {
-        ...payload, classe_assegnata: b.classeAssegnata || '',
-        tipo: 'attestato_partecipazione', stato: 'MINISTAGE CONCLUSO - USCITO'
+        ...payload, tipo: 'attestato_partecipazione', stato: 'MINISTAGE CONCLUSO - USCITO'
       });
-    } else {
-      // Riutilizza il generatore PDF e il servizio di conferma già presenti.
-      // Quel metodo gestisce i propri errori: qui si registra soltanto il tentativo.
-      if (typeof legacySend !== 'function') throw new Error('Motore conferme/PDF non disponibile');
-      await legacySend({ ...b, type: b.type === 'uscito' ? 'prenotazione' : b.type }, true);
+    } else if (kind === 'ingresso') {
+      // Lo script remoto deve supportare tipo=attestato_ingresso per generare un contenuto dedicato.
+      await postOpaque(core.endpoints?.email, {
+        ...payload, tipo: 'attestato_ingresso', stato: 'PRESENTE - AMMESSO',
+        oggetto: 'MiniStage Primo Levi - Conferma ingresso ' + b.code,
+        subject: 'MiniStage Primo Levi - Conferma ingresso ' + b.code,
+        messaggio: 'Ingresso registrato per ' + b.nome + ' in data ' + b.stageDate +
+          ' (' + b.indirizzo + '). Codice: ' + b.code,
+        message: 'Ingresso registrato per ' + b.nome + ' in data ' + b.stageDate +
+          ' (' + b.indirizzo + '). Codice: ' + b.code
+      });
+    } else if (kind === 'conferma') {
+      if (typeof legacySend !== 'function') throw new Error('Generatore conferma con PDF non disponibile');
+      await legacySend({ ...b, type: 'prenotazione' }, true);
     }
   }
 
@@ -345,9 +362,9 @@
       };
       if (succeeded) {
         const events = Array.isArray(previous.events) ? previous.events.slice(-7) : [];
-        events.push({ at, event: kind === 'ingresso' ? 'tentativo_di_conferma' : 'richiesta_inoltrata' });
+        events.push({ at, event: kind === 'conferma' ? 'tentativo_di_conferma' : 'richiesta_inoltrata' });
         update['mailHistory.' + kind] = {
-          ...previous, lastAt: at, lastResult: kind === 'ingresso' ? 'tentativo_non_verificato' : 'inoltrato_non_verificato',
+          ...previous, lastAt: at, lastResult: kind === 'conferma' ? 'tentativo_non_verificato' : 'inoltrato_non_verificato',
           count: (Number(previous.count) || 0) + 1, events
         };
         if (kind === 'promemoria') {
@@ -410,7 +427,7 @@
         if (booking?.code && ACTIVE.has(booking.type) && f?.updateDoc) {
           // Nessuna ricevuta di consegna: non si afferma che l'e-mail sia arrivata.
           f.updateDoc(ref(booking.code), {
-            'mailHistory.ingresso': {
+            'mailHistory.conferma': {
               lastAt: Date.now(), lastResult: 'tentativo_non_verificato',
               lastOrigin: isRetrieval ? 'ristampa_ricevuta' : 'iscrizione_automatica'
             }
@@ -433,6 +450,11 @@
         enqueueManual(button.dataset.miniMailCode, button.dataset.miniMailKind);
       }
     });
+    document.addEventListener('change', e => {
+      if (!e.target.matches('[data-mini-mail-date]')) return;
+      selectedDate = e.target.value;
+      renderPanels();
+    });
   }
 
   function init() {
@@ -453,7 +475,7 @@
       renderPanels();
       processNext();
     }, WORK_INTERVAL_MS);
-    window.__MINI_MAIL_QUEUE__ = { version: '2026-11-19', processNext };
+    window.__MINI_MAIL_QUEUE__ = { version: '2026-11-19-date-v2', processNext, renderPanels };
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init, { once: true });
