@@ -841,7 +841,7 @@
       if (!snap.exists()) return null;
       const data = { id: snap.id, ...snap.data() };
       const now = Date.now();
-      if (data.type !== CHECKED || data.certificateSent === true) return null;
+      if (data.type !== EXITED || data.certificateSent === true) return null;
       const busy = Number(data.certificateProcessingAt || 0) > now - 2 * 60 * 1000;
       if (busy && data.certificateProcessingOwner !== ownerId) return null;
       tx.set(ref, { certificateProcessingAt: now, certificateProcessingOwner: ownerId, certificateError: '' }, { merge: true });
@@ -896,8 +896,23 @@
             closureReason: 'fine_ministage_+5min'
           }, { merge: true });
         }
-        const entered = bookings.filter(b => b.slotId === slot.id && b.type === CHECKED && b.certificateSent !== true);
-        for (const row of entered) {
+        // +5 minuti dalla fine: chi era presente passa a Uscito/Concluso
+        // anche quando il servizio esterno della pergamena è temporaneamente indisponibile.
+        const toExit = bookings.filter(b => b.slotId === slot.id && b.type === CHECKED);
+        for (const row of toExit) {
+          await f.runTransaction(core.db, async tx => {
+            const bookingRef = f.doc(core.db, `${bookingPath()}/${row.code}`);
+            const snap = await tx.get(bookingRef);
+            if (!snap.exists() || snap.data().type !== CHECKED) return;
+            tx.update(bookingRef, {
+              type: EXITED, exitedAt: Date.now(), closureSource: 'automatico_5_minuti_dopo_fine'
+            });
+          });
+        }
+        // Recupera anche gli usciti con pergamena non inoltrata dopo un errore precedente.
+        const toCertificate = bookings.filter(b => b.slotId === slot.id &&
+          (b.type === CHECKED || b.type === EXITED) && b.certificateSent !== true);
+        for (const row of toCertificate) {
           const student = await claimCertificateExit(row.code).catch(() => null);
           if (!student) continue;
           const ref = f.doc(core.db, `${bookingPath()}/${student.code}`);
@@ -906,9 +921,14 @@
             const sentAt = Date.now();
             await f.setDoc(ref, {
               type: EXITED,
-              exitedAt: sentAt,
+              exitedAt: Number(student.exitedAt || 0) || sentAt,
               certificateSent: true,
               certificateSentAt: sentAt,
+              'mailHistory.uscita': {
+                lastAt: sentAt,
+                lastResult: 'richiesta_accettata_http',
+                lastOrigin: 'chiusura_automatica'
+              },
               certificateProcessingAt: 0,
               certificateProcessingOwner: '',
               certificateError: '',
@@ -990,7 +1010,7 @@
 
   function statusLabel(b) {
     if (b.type === WAITLIST) return 'Con riserva';
-    if (b.type === EXITED) return 'Uscito';
+    if (b.type === EXITED) return 'Uscito / Concluso';
     if (b.type === CHECKED) return 'Presente';
     if (b.type === CANCELLED) return 'Annullata';
     if (b.waitlistPromotedAt) return 'Ammesso da scorrimento';
