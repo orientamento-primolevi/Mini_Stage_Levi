@@ -67,7 +67,7 @@
 
   // Conserva e carica integralmente il pannello docente attuale.
   const adminScript = document.createElement('script');
-  adminScript.src = 'ministage-admin-console-v2-original.js?v=20260921-1m-class-fix';
+  adminScript.src = 'ministage-admin-console-v2-original.js?v=20261119-mailstatus2';
   adminScript.async = false;
   adminScript.addEventListener('load', () => {
     fixVisibleLabel();
