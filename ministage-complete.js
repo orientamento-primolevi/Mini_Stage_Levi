@@ -10,7 +10,7 @@
   const CLASS_COLLECTION = 'config_classi_ministage';
   const LOCK_COLLECTION = 'ministage_slot_locks';
   const SCANNER_COLLECTION = 'scanner_sessions';
-  const EMAIL_URL = 'https://script.google.com/macros/s/AKfycbxQmU-2BpLwVFknX3iyfLn03o7zNj1fg2rJO8j8eDMGktoIR8l0uzM59MmcAWXK7ldNBA/exec';
+  const EMAIL_URL = 'https://script.google.com/macros/s/AKfycbyO8yREkT2aPe7_ofAdmPAEWCvMiErXm5SurJYK67V8IEz6CnBEcP4zlPLX_3DsmTjCBA/exec';
   const DEFAULT_CAPACITY = 25;
   const CURVATURA = 'Liceo Scientifico - Opzione Scienze Applicate - Curvatura Economica';
   const CURVATURA_PUBLIC_LABEL = 'Liceo Scienze Applicate - Curvatura Economica';
@@ -626,7 +626,10 @@
     }
     // Apps Script cross-origin: la richiesta no-cors evita un preflight CORS non supportato.
     // La risposta opaca non conferma la consegna: non mostrare un falso 'e-mail inviata'.
-    await fetch(EMAIL_URL, {
+    // L'endpoint e' unico: stessa configurazione della pagina index.html.
+    // In caso di modifica dello script, non rimane un URL vecchio nel motore PDF.
+    const emailEndpoint = core?.endpoints?.email || EMAIL_URL;
+    await fetch(emailEndpoint, {
       method:'POST', mode:'no-cors', headers:{'Content-Type':'text/plain;charset=utf-8'},
       body:JSON.stringify({
         email:res.email, nome:first, cognome:rest, codice_prenotazione:res.code,
