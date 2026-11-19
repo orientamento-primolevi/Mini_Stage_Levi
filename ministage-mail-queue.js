@@ -4,12 +4,17 @@
   if (window.__MINI_MAIL_QUEUE_LOADED__) return;
   window.__MINI_MAIL_QUEUE_LOADED__ = true;
 
-  const TYPES = ['promemoria', 'ingresso', 'pergamena'];
-  const LABELS = { promemoria: 'Promemoria', ingresso: 'Conferma / pass ingresso', pergamena: 'Pergamena partecipazione' };
+  const TYPES = ['conferma', 'ingresso', 'promemoria', 'uscita'];
+  const LABELS = {
+    conferma: 'Conferma prenotazione / pass',
+    ingresso: 'Attestato ingresso',
+    promemoria: 'Promemoria',
+    uscita: 'Attestato uscita / pergamena'
+  };
   const ACTIVE = new Set(['prenotazione', 'entrato', 'uscito']);
   const WORK_INTERVAL_MS = 3500;
   const owner = 'docente-' + Math.random().toString(36).slice(2) + '-' + Date.now();
-  let core, f, loopBusy = false, batchBusy = false, rowObserver = null, legacySend = null, lastError = '';
+  let core, f, loopBusy = false, batchBusy = false, rowObserver = null, legacySend = null, lastError = '', selectedDate = '';
 
   const el = id => document.getElementById(id);
   const esc = x => String(x ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
@@ -21,10 +26,50 @@
   const path = () => 'artifacts/' + core.appId + '/public/data/' + core.collections.prenotazioni;
   const ref = code => f.doc(core.db, path() + '/' + code);
   const eligible = b => b && ACTIVE.has(b.type) && !!b.email && !!(b.code || b.id);
-  const admin = () => !!(core?.auth?.currentUser && el('view-admin') && !el('view-admin').classList.contains('hidden') &&
+  const teacherView = () => !!(el('view-admin') && !el('view-admin').classList.contains('hidden') &&
     el('admin-dashboard') && !el('admin-dashboard').classList.contains('hidden') &&
     el('admin-login') && el('admin-login').classList.contains('hidden'));
+  const admin = () => teacherView() && !!core?.auth?.currentUser;
   const notify = (message, error = false) => window.showMessage?.(message, error);
+
+  // Tutti i confronti di data sono nel fuso di Roma, non nel fuso del computer.
+  function itIso(value) {
+    const v = String(value || '').trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(v)) return v;
+    const m = v.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    return m ? m[3] + '-' + m[2].padStart(2, '0') + '-' + m[1].padStart(2, '0') : '';
+  }
+  function todayRome() {
+    const parts = Object.fromEntries(new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'Europe/Rome', year: 'numeric', month: '2-digit', day: '2-digit'
+    }).formatToParts(new Date()).filter(p => p.type !== 'literal').map(p => [p.type, p.value]));
+    return parts.year + '-' + parts.month + '-' + parts.day;
+  }
+  function tomorrowRome() {
+    const t = todayRome();
+    return new Date(Date.parse(t + 'T12:00:00Z') + 86400000).toISOString().slice(0, 10);
+  }
+  function stageIso(b) {
+    const slot = core?.getSlots?.()?.find(s => s.id === b?.slotId);
+    return itIso(b?.stageDate) || itIso(slot?.isoDate || slot?.date || slot?.dateStr);
+  }
+  function availableDates() {
+    const today = todayRome();
+    return [...new Set(all().filter(b => b.type === 'prenotazione').map(stageIso)
+      .filter(iso => iso && iso >= today))].sort();
+  }
+  function resolveDate() {
+    const dates = availableDates();
+    if (!dates.includes(selectedDate)) {
+      const tomorrow = tomorrowRome();
+      selectedDate = dates.includes(tomorrow) ? tomorrow : (dates[0] || '');
+    }
+    return selectedDate;
+  }
+  function dateText(iso) {
+    const m = iso.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    return m ? m[3] + '/' + m[2] + '/' + m[1] : iso;
+  }
 
   function getHistory(b, kind) {
     const h = b?.mailHistory?.[kind] || {};
@@ -32,8 +77,11 @@
     if (h.lastAt) return { at: h.lastAt, label: 'Richiesta registrata', q };
     if (kind === 'promemoria' && b.reminderRequestedAt) return { at: b.reminderRequestedAt, label: 'Richiesta registrata', q };
     if (kind === 'promemoria' && b.reminderSent) return { at: 0, label: 'Già segnato (ora non disponibile)', q };
-    if (kind === 'pergamena' && b.certificateSentAt) return { at: b.certificateSentAt, label: 'Invio registrato dal sistema', q };
-    if (kind === 'pergamena' && b.certificateSent) return { at: 0, label: 'Già segnato (ora non disponibile)', q };
+    if (kind === 'uscita' && b.certificateSentAt) return { at: b.certificateSentAt, label: 'Invio registrato dal sistema', q };
+    if (kind === 'uscita' && b.certificateSent) return { at: 0, label: 'Già segnato (ora non disponibile)', q };
+    if (kind === 'conferma' && b.mailHistory?.ingresso?.lastOrigin) {
+      return { at: b.mailHistory.ingresso.lastAt || 0, label: 'Precedente tentativo conferma', q };
+    }
     return { at: 0, label: 'Nessuna richiesta registrata', q };
   }
 
@@ -46,10 +94,15 @@
       : 'Invio in lavorazione dal ' + nowLabel(q.startedAt);
     else if (q.status === 'failed') status = 'Errore ultimo tentativo (' + nowLabel(q.failedAt) + ')' + (at ? '; precedente: ' + nowLabel(at) : '');
     else if (q.status === 'submitted') status = 'Richiesta inoltrata il ' + nowLabel(q.submittedAt);
-    const allowed = kind !== 'pergamena' || ['entrato', 'uscito'].includes(b.type);
+    const allowed = kind === 'conferma' ||
+      (kind === 'ingresso' && ['entrato', 'uscito'].includes(b.type) && !!b.checkInAt) ||
+      (kind === 'uscita' && b.type === 'uscito') ||
+      (kind === 'promemoria' && b.type === 'prenotazione' && !!stageIso(b) && stageIso(b) >= todayRome());
     const busy = q.status === 'queued' || (q.status === 'sending' && Number(q.leaseUntil) > Date.now());
-    const hadPrevious = !!at || (kind === 'promemoria' && b.reminderSent) || (kind === 'pergamena' && b.certificateSent);
-    const btnLabel = !allowed ? 'Dopo la presenza' : busy ? 'Già in coda' : hadPrevious ? 'Rinvia' : 'Invia';
+    const hadPrevious = !!at || (kind === 'promemoria' && b.reminderSent) || (kind === 'uscita' && b.certificateSent);
+    const btnLabel = !allowed
+      ? (kind === 'ingresso' ? 'Dopo ingresso' : kind === 'uscita' ? 'Dopo conclusione' : 'Data non valida')
+      : busy ? 'Già in coda' : hadPrevious ? 'Rinvia' : 'Invia';
     return '<div class="flex gap-2 items-center justify-between rounded-lg bg-white border border-slate-100 px-2 py-1.5">' +
       '<div class="min-w-0"><p class="text-[9px] font-black uppercase text-indigo-700">' + LABELS[kind] +
       '</p><p class="text-[10px] text-slate-600 break-words">' + esc(status) + '</p></div>' +
@@ -60,31 +113,24 @@
 
   function renderRows() {
     const root = el('mini-pages-book-list');
-    if (!root || !admin()) return;
-    root.querySelectorAll(':scope > article').forEach(article => {
-      const match = article.textContent.match(/\bMS-\d{6}\b/);
-      const b = match ? get(match[0]) : null;
-      if (!b || !eligible(b)) return;
+    if (!root || !teacherView()) return;
+    // I segnaposto sono generati direttamente dalla pagina Prenotazioni,
+    // perciò nessuna dipendenza da tempi di caricamento o estrazione del codice dal testo.
+    root.querySelectorAll('[data-mini-mail-card][data-code]').forEach(side => {
+      const b = get(side.dataset.code);
+      if (!b || !eligible(b)) {
+        side.textContent = 'Nessuna e-mail disponibile';
+        return;
+      }
       const key = TYPES.map(kind => {
         const q = b.mailQueue?.[kind] || {};
         const h = b.mailHistory?.[kind] || {};
-        return [kind, q.status, q.queuedAt, q.startedAt, q.submittedAt, q.failedAt, q.leaseUntil,
-          h.lastAt, b.reminderSent, b.reminderRequestedAt, b.certificateSent, b.certificateSentAt].join(':');
-      }).join('|') + '|' + b.type;
-      let side = article.querySelector('[data-mini-mail-sidebar]');
-      if (side?.dataset.renderKey === key) return;
-      if (!side) {
-        side = document.createElement('aside');
-        side.dataset.miniMailSidebar = '1';
-        side.className = 'w-full lg:max-w-sm lg:shrink-0 rounded-xl border border-indigo-100 bg-indigo-50/50 p-2 space-y-1';
-        const heading = document.createElement('p');
-        heading.className = 'text-[10px] font-black text-indigo-900 mb-1';
-        heading.textContent = 'Storico e-mail e reinvio';
-        side.appendChild(heading);
-        article.firstElementChild?.appendChild(side);
-      }
+        return [kind, q.status, q.queuedAt, q.startedAt, q.submittedAt, q.failedAt,
+          q.leaseUntil, h.lastAt, b.reminderSent, b.certificateSentAt].join(':');
+      }).join('|') + '|' + b.type + '|' + stageIso(b);
+      if (side.dataset.renderKey === key) return;
       side.dataset.renderKey = key;
-      side.innerHTML = '<p class="text-[10px] font-black text-indigo-900 mb-1">Storico e-mail e reinvio</p>' +
+      side.innerHTML = '<p class="text-[11px] font-black text-indigo-900 mb-1">Invii e-mail · data e ora (Italia)</p>' +
         TYPES.map(kind => statusHtml(b, kind)).join('');
     });
   }
@@ -92,10 +138,29 @@
   function panelMarkup() {
     return '<div class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">' +
       '<div><h3 class="font-black text-indigo-950 text-base">Motore e-mail Mini Stage</h3>' +
-      '<p class="text-[11px] text-slate-600 mt-1">Coda persistente su Firebase. Il motore elabora le richieste mentre l’Area Docenti rimane aperta.</p></div>' +
-      '<button type="button" data-mini-mail-all class="bg-indigo-600 hover:bg-indigo-700 text-white font-black text-xs rounded-xl px-4 py-3">Invia i promemoria a tutti gli iscritti</button></div>' +
+      '<p class="text-[11px] text-slate-600 mt-1">Seleziona la data. Saranno accodati soltanto i promemoria delle prenotazioni di quel giorno.</p></div>' +
+      '<div class="flex flex-col sm:flex-row gap-2 sm:items-end">' +
+      '<label class="text-[10px] font-black text-indigo-900">Data Mini Stage<select data-mini-mail-date class="mt-1 block w-full rounded-lg border border-indigo-200 bg-white p-2.5 text-xs font-bold"></select></label>' +
+      '<button type="button" data-mini-mail-all class="bg-indigo-600 hover:bg-indigo-700 text-white font-black text-xs rounded-xl px-4 py-3">Invia promemoria per questa data</button></div></div>' +
       '<div data-mini-mail-stats class="text-[11px] font-semibold text-indigo-900 bg-indigo-50 border border-indigo-100 rounded-xl p-3 mt-3">Caricamento coda...</div>' +
-      '<p class="text-[10px] text-slate-500 mt-2">La data/ora indica una richiesta inoltrata o registrata, non la consegna nella casella. I servizi Google Apps Script attuali non restituiscono una ricevuta di consegna verificabile.</p>';
+      '<p class="text-[10px] text-slate-500 mt-2">Il registro riporta la richiesta inoltrata, non la consegna effettiva. Le e-mail sono elaborate mentre l’Area Docenti rimane aperta.</p>';
+  }
+  function renderDateSelectors() {
+    const current = resolveDate();
+    const dates = availableDates();
+    const options = dates.map(d => '<option value="' + d + '">' +
+      dateText(d) + (d === tomorrowRome() ? ' · domani' : '') + '</option>').join('');
+    document.querySelectorAll('[data-mini-mail-date]').forEach(input => {
+      if (input.dataset.options !== options) {
+        input.innerHTML = '<option value="">Seleziona una data</option>' + options;
+        input.dataset.options = options;
+      }
+      if (input.value !== current) input.value = current;
+    });
+    document.querySelectorAll('[data-mini-mail-all]').forEach(button => {
+      button.disabled = !current;
+      button.classList.toggle('opacity-50', !current);
+    });
   }
 
   function ensurePanels() {
@@ -120,13 +185,15 @@
   }
 
   function renderPanels() {
-    if (!admin()) return;
+    if (!teacherView()) return;
     ensurePanels();
+    renderDateSelectors();
     const entries = all().filter(eligible);
     const pending = entries.reduce((n, b) => n + TYPES.filter(kind => b.mailQueue?.[kind]?.status === 'queued').length, 0);
     const sending = entries.reduce((n, b) => n + TYPES.filter(kind => b.mailQueue?.[kind]?.status === 'sending').length, 0);
     const failed = entries.reduce((n, b) => n + TYPES.filter(kind => b.mailQueue?.[kind]?.status === 'failed').length, 0);
-    const stats = 'Iscritti: ' + entries.length + ' · In coda: ' + pending + ' · In lavorazione: ' + sending +
+    const dateEntries = entries.filter(b => b.type === 'prenotazione' && stageIso(b) === selectedDate).length;
+    const stats = 'Iscritti: ' + entries.length + ' · Per la data scelta: ' + dateEntries + ' · In coda: ' + pending + ' · In lavorazione: ' + sending +
       ' · Errori: ' + failed + (lastError ? ' · Attenzione: ' + lastError : '') +
       (batchBusy ? ' · Accodamento in corso...' : '');
     document.querySelectorAll('[data-mini-mail-stats]').forEach(node => {
