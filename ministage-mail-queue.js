@@ -329,9 +329,42 @@
         ...payload, tipo: 'attestato_partecipazione', stato: 'MINISTAGE CONCLUSO - USCITO'
       });
     } else if (kind === 'ingresso') {
-      // Lo script remoto deve supportare tipo=attestato_ingresso per generare un contenuto dedicato.
+      // PDF autonomo per l'ingresso: usa lo stesso formato pdfBase64
+      // che il servizio di conferma prenotazione già riceve.
+      const Pdf = window.jspdf?.jsPDF;
+      if (!Pdf) throw new Error('Libreria PDF non disponibile');
+      const pdf = new Pdf();
+      pdf.setFillColor(40, 57, 125);
+      pdf.rect(0, 0, 210, 42, 'F');
+      pdf.setTextColor(255, 255, 255);
+      pdf.setFont('helvetica', 'bold');
+      pdf.setFontSize(17);
+      pdf.text('ITSCG PRIMO LEVI - SEREGNO', 16, 20);
+      pdf.setFontSize(12);
+      pdf.text('ATTESTAZIONE DI INGRESSO - MINI STAGE', 16, 32);
+      pdf.setTextColor(32, 47, 79);
+      pdf.setFontSize(13);
+      pdf.text('Studente: ' + String(b.nome || ''), 16, 65);
+      pdf.setFontSize(11);
+      const details = [
+        'Codice: ' + b.code, 'Percorso: ' + (b.indirizzo || ''),
+        'Data: ' + (b.stageDate || ''), 'Orario: ' + (b.stageTime || ''),
+        'Classe: ' + (b.classeAssegnata || 'Da definire'),
+        'Ingresso registrato: ' + nowLabel(b.checkInAt)
+      ];
+      let y = 82;
+      for (const detail of details) {
+        for (const line of pdf.splitTextToSize(detail, 175)) {
+          pdf.text(line, 16, y);
+          y += 7;
+        }
+        y += 4;
+      }
+      pdf.setFontSize(10);
+      pdf.text('Documento generato dal sistema di accoglienza Mini Stage.', 16, Math.max(170, y + 8));
+      const pdfBase64 = pdf.output('datauristring').split(',')[1];
       await postOpaque(core.endpoints?.email, {
-        ...payload, tipo: 'attestato_ingresso', stato: 'PRESENTE - AMMESSO',
+        ...payload, pdfBase64, tipo: 'attestato_ingresso', stato: 'PRESENTE - AMMESSO',
         oggetto: 'MiniStage Primo Levi - Conferma ingresso ' + b.code,
         subject: 'MiniStage Primo Levi - Conferma ingresso ' + b.code,
         messaggio: 'Ingresso registrato per ' + b.nome + ' in data ' + b.stageDate +
@@ -368,9 +401,15 @@
           count: (Number(previous.count) || 0) + 1, events
         };
         if (kind === 'promemoria') {
-          // Compatibilità con il contatore e il filtro del sito preesistente.
+          // Flag storico: richiesta inoltrata, non ricevuta di consegna.
           update.reminderSent = true;
           update.reminderRequestedAt = at;
+        }
+        if (kind === 'uscita') {
+          // La chiusura automatica non deve spedire a raffica una seconda
+          // pergamena se è stato richiesto manualmente il reinvio.
+          update.certificateRequestedAt = at;
+          update.certificateRequestStatus = 'inoltrato_non_verificato';
         }
         // Non aggiornare certificateSent/type: la chiusura automatica esistente deve restare integra.
       }
