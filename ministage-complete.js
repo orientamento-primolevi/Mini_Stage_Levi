@@ -1086,35 +1086,157 @@
     window.showMessage?.('Consegna documenti registrata.');
   }
 
-  function pdfTable(pdf, title, rows, columns) {
-    pdf.setFont('Helvetica','bold'); pdf.setFontSize(15); pdf.setTextColor(30,27,75); pdf.text(title,15,18);
-    let y=28; pdf.setFontSize(7.5);
-    const widths = columns.map(c=>c.w); const total=widths.reduce((a,b)=>a+b,0); const scale=180/total;
-    const drawHeader=()=>{ let x=15; pdf.setFillColor(238,242,255); pdf.rect(15,y,180,7,'F'); pdf.setTextColor(49,46,129); columns.forEach((c,i)=>{pdf.text(c.label,x+1,y+4.7);x+=widths[i]*scale;}); y+=8; };
-    drawHeader(); pdf.setFont('Helvetica','normal'); pdf.setTextColor(50,50,60);
-    rows.forEach((r,idx)=>{ if(y>280){pdf.addPage();y=15;drawHeader();} let x=15; columns.forEach((c,i)=>{const val=String(c.get(r,idx)??''); const maxW=widths[i]*scale-2; const clipped=val.length>35?val.slice(0,32)+'…':val; pdf.text(clipped,x+1,y+4.5,{maxWidth:maxW});x+=widths[i]*scale;}); pdf.setDrawColor(235,235,240);pdf.line(15,y+6.5,195,y+6.5); y+=8; });
+  // Tabelle PDF A4 orizzontali: dimensioni reali pagina, nessuna linea sopra il testo.
+  function pdfFit(pdf, raw, width) {
+    const value = String(raw ?? '-').replace(/[\r\n\t]+/g,' ').replace(/\s+/g,' ').trim() || '-';
+    if (pdf.getTextWidth(value) <= width) return value;
+    let left=0, right=value.length;
+    while(left<right) {
+      const mid=Math.ceil((left+right)/2);
+      if(pdf.getTextWidth(value.slice(0,mid)+'...') <= width) left=mid;
+      else right=mid-1;
+    }
+    return value.slice(0,left)+'...';
   }
-
-  function activeRowsForAddress(indirizzo) { return bookings.filter(b=>b.indirizzo===indirizzo && (b.type===ACTIVE || b.type===CHECKED)); }
-
-  function downloadClassListPdf(indirizzo) {
-    const jsPDF=window.jspdf?.jsPDF; if(!jsPDF)return window.showMessage?.('PDF non disponibile.',true);
-    const pdf=new jsPDF('l','mm','a4'); const rows=activeRowsForAddress(indirizzo); const classe=classes[indirizzo]||'Classe da definire';
-    pdfTable(pdf,`MiniStage - ${classe}`,rows,[{label:'#',w:5,get:(_,i)=>i+1},{label:'Studente',w:28,get:r=>r.nome},{label:'Percorso',w:32,get:r=>r.indirizzo},{label:'Data',w:16,get:r=>r.stageDate},{label:'Ora',w:18,get:r=>r.stageTime},{label:'Stato',w:20,get:r=>statusLabel(r)},{label:'Email',w:35,get:r=>r.email},{label:'Telefono',w:22,get:r=>r.cellulare}]); pdf.save(`MiniStage_${classe.replace(/[^a-z0-9]+/gi,'_')}.pdf`);
+  const PDF_CONF_COLS = [
+    {label:'N.',w:9,get:(_,i)=>i+1},
+    {label:'Studente',w:50,get:r=>r.nome},
+    {label:'Data',w:23,get:r=>r.stageDate},
+    {label:'Ora',w:26,get:r=>r.stageTime},
+    {label:'Codice',w:30,get:r=>r.code},
+    {label:'Stato',w:25,get:r=>statusLabel(r)},
+    {label:'Email',w:67,get:r=>r.email},
+    {label:'Telefono',w:47,get:r=>r.cellulare}
+  ];
+  const PDF_WAIT_COLS = [
+    {label:'Pos.',w:12,get:(_,i)=>i+1},
+    {label:'Studente',w:53,get:r=>r.nome},
+    {label:'Data',w:23,get:r=>r.stageDate},
+    {label:'Ora',w:26,get:r=>r.stageTime},
+    {label:'Codice',w:30,get:r=>r.code},
+    {label:'Stato',w:30,get:()=> 'Lista attesa'},
+    {label:'Email',w:64,get:r=>r.email},
+    {label:'Telefono',w:39,get:r=>r.cellulare}
+  ];
+  const uniquePdfRows = rows => {
+    const ids = new Set();
+    return rows.filter(r => {
+      const code=String(r.code || r.id || '').trim();
+      if (!code || ids.has(code)) return false;
+      ids.add(code);
+      return true;
+    });
+  };
+  const nameCompare = (a,b) => String(a.nome||'').localeCompare(String(b.nome||''),'it',{sensitivity:'base'});
+  const pdfActiveRows = (items, indirizzo) => uniquePdfRows(items.filter(b =>
+    (!indirizzo || b.indirizzo === indirizzo) &&
+    (b.type === ACTIVE || b.type === CHECKED || b.type === EXITED))).sort(nameCompare);
+  const pdfWaitRows = (items, indirizzo) => uniquePdfRows(items.filter(b =>
+    (!indirizzo || b.indirizzo === indirizzo) && b.type === WAITLIST))
+    .sort((a,b)=>(Number(a.timestamp)||0)-(Number(b.timestamp)||0));
+  async function freshPdfBookings() {
+    const snap = await f.getDocs(f.collection(core.db, bookingPath()));
+    const all=[];
+    snap.forEach(d=>all.push({ ...d.data(), id:d.id, code:d.data().code || d.id }));
+    return all;
   }
-
-  function downloadAllClassListsPdf() {
-    const jsPDF=window.jspdf?.jsPDF; if(!jsPDF)return window.showMessage?.('PDF non disponibile.',true);
-    const pdf=new jsPDF('l','mm','a4'); let first=true;
-    for(const indirizzo of core.addresses){ const rows=activeRowsForAddress(indirizzo); if(!rows.length)continue; if(!first)pdf.addPage(); first=false; pdfTable(pdf,`MiniStage - ${classes[indirizzo]||indirizzo}`,rows,[{label:'#',w:5,get:(_,i)=>i+1},{label:'Studente',w:30,get:r=>r.nome},{label:'Data',w:18,get:r=>r.stageDate},{label:'Ora',w:18,get:r=>r.stageTime},{label:'Stato',w:22,get:r=>statusLabel(r)},{label:'Email',w:38,get:r=>r.email},{label:'Telefono',w:25,get:r=>r.cellulare}]); }
-    if(first){pdf.setFontSize(14);pdf.text('Nessuna prenotazione attiva.',15,20);} pdf.save('MiniStage_Tutte_le_Classi.pdf');
+  function pdfTable(pdf,title,rows,cols,y=46) {
+    const pageHeight=pdf.internal.pageSize.getHeight();
+    const bottom=pageHeight-15;
+    if(y+24>bottom){pdf.addPage();y=17;}
+    pdf.setFont('helvetica','bold');pdf.setTextColor(35,49,96);pdf.setFontSize(11);
+    pdf.text(title+' - Totale: '+rows.length,12,y);
+    y+=5;
+    function head() {
+      pdf.setFillColor(226,234,249);pdf.rect(10,y,277,9,'F');
+      pdf.setTextColor(30,42,90);pdf.setFont('helvetica','bold');pdf.setFontSize(7.8);
+      let x=10;
+      cols.forEach(c=>{pdf.text(pdfFit(pdf,c.label,c.w-3),x+1.5,y+6);x+=c.w;});
+      y+=9;
+    }
+    head();
+    if(!rows.length) {
+      pdf.setTextColor(99,105,120);pdf.setFontSize(8.5);pdf.setFont('helvetica','italic');
+      pdf.text('Nessun nominativo in questa sezione.',12,y+5);
+      return y+14;
+    }
+    rows.forEach((row,idx)=>{
+      if(y+9>bottom) {
+        pdf.addPage();y=17;
+        pdf.setFont('helvetica','bold');pdf.setTextColor(35,49,96);pdf.setFontSize(10);
+        pdf.text(title+' (continua)',12,y);y+=6;head();
+      }
+      if(idx%2===0){pdf.setFillColor(247,249,252);pdf.rect(10,y,277,9,'F');}
+      pdf.setFont('helvetica','normal');pdf.setTextColor(42,49,63);pdf.setFontSize(7.5);
+      let x=10;
+      cols.forEach(c=>{pdf.text(pdfFit(pdf,c.get(row,idx),c.w-3),x+1.5,y+5.9);x+=c.w;});
+      y+=9;
+    });
+    return y+8;
   }
-
-  function downloadWaitlistPdf() {
-    const jsPDF=window.jspdf?.jsPDF; if(!jsPDF)return window.showMessage?.('PDF non disponibile.',true);
-    const pdf=new jsPDF('l','mm','a4'); const rows=bookings.filter(b=>b.type===WAITLIST).sort((a,b)=>(a.timestamp||0)-(b.timestamp||0));
-    pdfTable(pdf,'MiniStage - Iscrizioni con riserva',rows,[{label:'#',w:5,get:(_,i)=>i+1},{label:'Studente',w:28,get:r=>r.nome},{label:'Classe',w:25,get:r=>resolvedClass(r.indirizzo,r.classeAssegnata)},{label:'Percorso',w:35,get:r=>r.indirizzo},{label:'Data',w:16,get:r=>r.stageDate},{label:'Ora',w:18,get:r=>r.stageTime},{label:'Pos.',w:8,get:r=>queueFor(r.slotId).findIndex(x=>x.code===r.code)+1},{label:'Email',w:35,get:r=>r.email},{label:'Telefono',w:22,get:r=>r.cellulare}]);
-    pdf.save('MiniStage_Iscrizioni_con_Riserva.pdf');
+  function pdfHeading(pdf, title, subtitle, confirmedCount, waitingCount) {
+    pdf.setFillColor(35,49,96);pdf.rect(0,0,297,17,'F');
+    pdf.setFont('helvetica','bold');pdf.setFontSize(13.2);pdf.setTextColor(255,255,255);
+    pdf.text('ITSCG Primo Levi - Seregno | Mini Stage',12,11);
+    pdf.setTextColor(35,49,96);pdf.setFontSize(12);
+    pdf.text(pdfFit(pdf,title,270),12,25);
+    pdf.setFont('helvetica','normal');pdf.setTextColor(70,80,95);pdf.setFontSize(9);
+    pdf.text(pdfFit(pdf,subtitle,270),12,33);
+    pdf.text('Iscritti effettivi: '+confirmedCount+'     Lista d attesa: '+waitingCount,12,40);
+  }
+  function pdfFooter(pdf) {
+    const pages=pdf.getNumberOfPages();
+    for(let i=1;i<=pages;i++){
+      pdf.setPage(i);pdf.setFont('helvetica','normal');pdf.setFontSize(7);
+      pdf.setTextColor(105,111,120);
+      pdf.text('Elenco riservato al personale scolastico',12,204);
+      pdf.text('Pagina '+i+' / '+pages,285,204,{align:'right'});
+    }
+  }
+  async function downloadClassListPdf(indirizzo) {
+    const Ctor=window.jspdf?.jsPDF;if(!Ctor)return window.showMessage?.('PDF non disponibile.',true);
+    try{
+      const fresh=await freshPdfBookings();
+      const confirmed=pdfActiveRows(fresh,indirizzo);
+      const waiting=pdfWaitRows(fresh,indirizzo);
+      const pdf=new Ctor('l','mm','a4');
+      const name=classes[indirizzo] || indirizzo || 'Classe da definire';
+      pdfHeading(pdf,name,'Percorso: '+indirizzo,confirmed.length,waiting.length);
+      const y=pdfTable(pdf,'A - ISCRITTI CONFERMATI',confirmed,PDF_CONF_COLS);
+      pdfTable(pdf,'B - LISTA DI ATTESA - NON AMMESSI',waiting,PDF_WAIT_COLS,y);
+      pdfFooter(pdf);
+      pdf.save('MiniStage_'+String(name).replace(/[^a-z0-9]+/gi,'_')+'.pdf');
+    }catch(e){console.error('PDF classe',e);window.showMessage?.('Errore lettura iscritti o generazione PDF.',true);}
+  }
+  async function downloadAllClassListsPdf() {
+    const Ctor=window.jspdf?.jsPDF;if(!Ctor)return window.showMessage?.('PDF non disponibile.',true);
+    try{
+      const fresh=await freshPdfBookings();
+      const pdf=new Ctor('l','mm','a4');
+      let first=true;
+      const addresses=[...new Set([...core.addresses,...fresh.map(x=>x.indirizzo).filter(Boolean)])];
+      for(const indirizzo of addresses) {
+        const confirmed=pdfActiveRows(fresh,indirizzo), waiting=pdfWaitRows(fresh,indirizzo);
+        if(!confirmed.length && !waiting.length) continue;
+        if(!first)pdf.addPage();first=false;
+        pdfHeading(pdf,classes[indirizzo]||indirizzo,'Percorso: '+indirizzo,confirmed.length,waiting.length);
+        const y=pdfTable(pdf,'A - ISCRITTI CONFERMATI',confirmed,PDF_CONF_COLS);
+        pdfTable(pdf,'B - LISTA DI ATTESA - NON AMMESSI',waiting,PDF_WAIT_COLS,y);
+      }
+      if(first)pdfHeading(pdf,'Elenco generale','Nessuna prenotazione presente',0,0);
+      pdfFooter(pdf);pdf.save('MiniStage_Tutte_le_Classi.pdf');
+    }catch(e){console.error('PDF tutte classi',e);window.showMessage?.('Errore lettura iscritti o generazione PDF.',true);}
+  }
+  async function downloadWaitlistPdf() {
+    const Ctor=window.jspdf?.jsPDF;if(!Ctor)return window.showMessage?.('PDF non disponibile.',true);
+    try{
+      const fresh=await freshPdfBookings();
+      const waiting=pdfWaitRows(fresh);
+      const pdf=new Ctor('l','mm','a4');
+      pdfHeading(pdf,'Lista di attesa generale','Richieste con riserva - non ammesse',0,waiting.length);
+      pdfTable(pdf,'LISTA DI ATTESA',waiting,PDF_WAIT_COLS);
+      pdfFooter(pdf);pdf.save('MiniStage_Iscrizioni_con_Riserva.pdf');
+    }catch(e){console.error('PDF attesa',e);window.showMessage?.('Errore lettura lista di attesa.',true);}
   }
 
   function enhanceSlotRows() {
