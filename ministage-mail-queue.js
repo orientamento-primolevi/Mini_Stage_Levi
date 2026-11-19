@@ -95,7 +95,7 @@
     else if (q.status === 'failed') status = 'Errore ultimo tentativo (' + nowLabel(q.failedAt) + ')' + (at ? '; precedente: ' + nowLabel(at) : '');
     else if (q.status === 'submitted') status = 'Richiesta inoltrata il ' + nowLabel(q.submittedAt);
     const allowed = kind === 'conferma' ||
-      (kind === 'ingresso' && ['entrato', 'uscito'].includes(b.type) && !!b.checkInAt) ||
+      (kind === 'ingresso' && ['entrato', 'uscito'].includes(b.type)) ||
       (kind === 'uscita' && b.type === 'uscito') ||
       (kind === 'promemoria' && b.type === 'prenotazione' && !!stageIso(b) && stageIso(b) >= todayRome());
     const busy = q.status === 'queued' || (q.status === 'sending' && Number(q.leaseUntil) > Date.now());
