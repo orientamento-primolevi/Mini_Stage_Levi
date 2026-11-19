@@ -492,7 +492,7 @@
     const root = document.getElementById('mini-pages-address-chips');
     if (!root) return;
     const selected = root.dataset.selected || '';
-    const rows = activeBookings();
+    const rows = state.bookings.filter(b => [ACTIVE, CHECKED, EXITED].includes(b.type));
     const chips = [['', 'Tutti', rows.length], ...(core.addresses || []).map(a => [a, a, rows.filter(b => b.indirizzo === a).length])];
     root.innerHTML = chips.map(([value,label,count]) => `<button type="button" data-address="${esc(value)}" onclick="window.miniTeacherSetAddress(this.dataset.address)" class="px-3 py-2 rounded-xl text-[10px] font-black border ${selected === value ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-white text-emerald-800 border-emerald-100'}">${esc(label)} <span class="opacity-70">(${count})</span></button>`).join('');
   }
