@@ -841,7 +841,7 @@
       if (!snap.exists()) return null;
       const data = { id: snap.id, ...snap.data() };
       const now = Date.now();
-      if (data.type !== EXITED || data.certificateSent === true) return null;
+      if (data.type !== EXITED || data.certificateSent === true || data.certificateRequestedAt) return null;
       const busy = Number(data.certificateProcessingAt || 0) > now - 2 * 60 * 1000;
       if (busy && data.certificateProcessingOwner !== ownerId) return null;
       tx.set(ref, { certificateProcessingAt: now, certificateProcessingOwner: ownerId, certificateError: '' }, { merge: true });
@@ -911,7 +911,8 @@
         }
         // Recupera anche gli usciti con pergamena non inoltrata dopo un errore precedente.
         const toCertificate = bookings.filter(b => b.slotId === slot.id &&
-          (b.type === CHECKED || b.type === EXITED) && b.certificateSent !== true);
+          (b.type === CHECKED || b.type === EXITED) &&
+          b.certificateSent !== true && !b.certificateRequestedAt);
         for (const row of toCertificate) {
           const student = await claimCertificateExit(row.code).catch(() => null);
           if (!student) continue;
